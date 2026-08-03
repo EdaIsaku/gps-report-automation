@@ -1,8 +1,8 @@
 node_modules/
 .env
-.env.example
 downloads/
 debug/
 playwright-profile/
 *.log
 dist/
+.task-tmp/
