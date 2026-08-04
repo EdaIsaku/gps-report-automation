@@ -32,6 +32,25 @@ function safeFileName(value: string): string {
   return value.normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[<>:"/\\|?*]+/g, "").replace(/\s+/g, "_").replace(/_+/g, "_").replace(/^_|_$/g, "");
 }
 
+function normalize(value: string): string {
+  return value
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^a-zA-Z0-9]+/g, " ")
+    .trim()
+    .toLowerCase();
+}
+
+function onlyFilter(): string | undefined {
+  const inline = process.argv.find((argument) => argument.startsWith("--only="));
+  if (inline) return inline.slice("--only=".length).trim();
+  const index = process.argv.indexOf("--only");
+  if (index < 0) return undefined;
+  const value = process.argv[index + 1];
+  if (!value || value.startsWith("--")) throw new Error('Pas --only duhet emri i spitalit, p.sh. --only "Bulqize".');
+  return value.trim();
+}
+
 function monthLabel(month: string): string {
   if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(month)) throw new Error("Muaji duhet të jetë YYYY-MM, p.sh. 2026-07.");
   const [year, monthNumber] = month.split("-").map(Number);
@@ -115,14 +134,28 @@ async function main(): Promise<void> {
   if (!month) throw new Error("Jep muajin, p.sh. npm run drafts -- 2026-07 --preview");
   const previewOnly = process.argv.includes("--preview");
   const force = process.argv.includes("--force");
+  const requestedInstitution = onlyFilter();
   const label = monthLabel(month);
   const outputDir = path.resolve(DOWNLOAD_ROOT, month);
   const resultFile = path.join(outputDir, `drafts_${month}.json`);
   await fs.mkdir(outputDir, { recursive: true });
 
   const recipientMap = new Map((recipients as Recipient[]).map((item) => [item.institution, item.email]));
-  const institutions = (reports as Array<{ institution: string }>).map((item) => item.institution);
-  const missingRecipients = institutions.filter((institution) => !recipientMap.has(institution));
+  const allInstitutions = (reports as Array<{ institution: string }>).map((item, index) => ({ institution: item.institution, reportIndex: index }));
+  let selectedInstitutions = allInstitutions;
+  if (requestedInstitution) {
+    const wanted = normalize(requestedInstitution);
+    const exact = allInstitutions.filter((item) => normalize(item.institution) === wanted);
+    const matches = exact.length ? exact : allInstitutions.filter((item) => normalize(item.institution).includes(wanted));
+    if (matches.length === 0) throw new Error(`Nuk u gjet spital që përputhet me "${requestedInstitution}".`);
+    if (matches.length > 1) {
+      throw new Error(`"${requestedInstitution}" përputhet me disa institucione: ${matches.map((item) => item.institution).join(", ")}. Jep një emër më të plotë.`);
+    }
+    selectedInstitutions = matches;
+    console.log(`Testi është kufizuar vetëm për: ${matches[0].institution}\n`);
+  }
+
+  const missingRecipients = selectedInstitutions.filter((item) => !recipientMap.has(item.institution)).map((item) => item.institution);
   if (missingRecipients.length) throw new Error(`Mungojnë email-et për: ${missingRecipients.join(", ")}`);
 
   const previous = await fs.readFile(resultFile, "utf8")
@@ -130,9 +163,9 @@ async function main(): Promise<void> {
     .catch(() => ({ results: [] }));
   const alreadyCreated = new Set((previous.results ?? []).filter((item) => item.status === "CREATED").map((item) => item.institution));
 
-  const plans = await Promise.all(institutions.map(async (institution, index) => {
+  const plans = await Promise.all(selectedInstitutions.map(async ({ institution, reportIndex }) => {
     const email = recipientMap.get(institution)!;
-    const file = path.join(outputDir, `${String(index + 1).padStart(2, "0")}_${safeFileName(institution)}_${month}.xlsx`);
+    const file = path.join(outputDir, `${String(reportIndex + 1).padStart(2, "0")}_${safeFileName(institution)}_${month}.xlsx`);
     const exists = await fs.access(file).then(() => true).catch(() => false);
     const message = messageFor(institution, label);
     return { institution, email, file, exists, ...message };

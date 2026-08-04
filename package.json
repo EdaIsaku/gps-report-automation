@@ -10,7 +10,8 @@
     "inspect": "tsx src/index.ts --inspect",
     "discover-api": "tsx src/index.ts --discover-api",
     "api": "tsx src/api.ts",
-    "drafts": "tsx src/drafts.ts"
+    "drafts": "tsx src/drafts.ts",
+    "drafts-browser": "tsx src/drafts-browser.ts"
   },
   "dependencies": {
     "@azure/msal-node": "^5.4.3",

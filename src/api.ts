@@ -40,7 +40,8 @@ const BASE_URL =
 const API_URL = process.env.GPS_API_URL ?? `${BASE_URL}:18889`;
 const DOWNLOAD_ROOT = process.env.GPS_DOWNLOAD_ROOT ?? "downloads";
 const API_TIMEOUT = Number(process.env.GPS_API_TIMEOUT_MS ?? 600_000);
-const PAGE_SIZE = Number(process.env.GPS_API_PAGE_SIZE ?? 3);
+// Një ambulancë për kërkesë: shmang 502 te raportet e rënda si Trauma.
+const PAGE_SIZE = 1;
 const TRIP_RESULT_LIMIT = Number(process.env.GPS_TRIP_RESULT_LIMIT ?? 1_000);
 const TRIP_API_ATTEMPTS = Number(process.env.GPS_TRIP_API_ATTEMPTS ?? 4);
 const TRIP_API_RETRY_DELAY = Number(
@@ -68,6 +69,19 @@ function safeFileName(value: string): string {
     .replace(/\s+/g, "_")
     .replace(/_+/g, "_")
     .replace(/^_|_$/g, "");
+}
+
+function optionValue(name: string): string | undefined {
+  const inline = process.argv.find((argument) =>
+    argument.startsWith(`${name}=`),
+  );
+  if (inline) return inline.slice(name.length + 1).trim();
+  const index = process.argv.indexOf(name);
+  if (index < 0) return undefined;
+  const value = process.argv[index + 1];
+  if (!value || value.startsWith("--"))
+    throw new Error(`Pas ${name} duhet të vendosësh një vlerë.`);
+  return value.trim();
 }
 
 function monthBounds(month: string): { start: string; end: string } {
@@ -736,11 +750,45 @@ async function main(): Promise<void> {
     console.log(`U gjetën ${customReports.length} raporte në GPS.\n`);
 
     const missingOnly = process.argv.includes("--missing");
-    for (const [index, config] of (reports as ReportConfig[]).entries()) {
-      const prefix = `[${index + 1}/${reports.length}] ${config.institution}`;
+    const requestedInstitution = optionValue("--only");
+    const allReports = (reports as ReportConfig[]).map(
+      (config, reportIndex) => ({ config, reportIndex }),
+    );
+    let selectedReports = allReports;
+    if (requestedInstitution) {
+      const wanted = normalize(requestedInstitution);
+      const exact = allReports.filter(
+        ({ config }) => normalize(config.institution) === wanted,
+      );
+      const matches = exact.length
+        ? exact
+        : allReports.filter(
+            ({ config }) =>
+              normalize(config.institution).includes(wanted) ||
+              config.aliases.some((alias) => normalize(alias).includes(wanted)),
+          );
+      if (matches.length === 0)
+        throw new Error(
+          `Nuk u gjet spital që përputhet me "${requestedInstitution}".`,
+        );
+      if (matches.length > 1)
+        throw new Error(
+          `"${requestedInstitution}" përputhet me: ${matches.map(({ config }) => config.institution).join(", ")}.`,
+        );
+      selectedReports = matches;
+      console.log(
+        `Ekzekutimi është kufizuar vetëm për: ${matches[0].config.institution}\n`,
+      );
+    }
+
+    for (const [
+      selectedIndex,
+      { config, reportIndex },
+    ] of selectedReports.entries()) {
+      const prefix = `[${selectedIndex + 1}/${selectedReports.length}] ${config.institution}`;
       const file = path.join(
         outputDir,
-        `${String(index + 1).padStart(2, "0")}_${safeFileName(config.institution)}_${month}.xlsx`,
+        `${String(reportIndex + 1).padStart(2, "0")}_${safeFileName(config.institution)}_${month}.xlsx`,
       );
       try {
         if (missingOnly) {
